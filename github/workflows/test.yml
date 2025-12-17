@@ -1,383 +1,35 @@
-name: Build Android APK
+name: Python Tests
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:  # تشغيل يدوي
-
-env:
-  PYTHON_VERSION: '3.8'
-  BUILD_SCRIPT: 'build.sh'
 
 jobs:
-  build-android:
+  test:
     runs-on: ubuntu-latest
-    
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, 3.10]
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        
-    - name: Set up Python
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ env.PYTHON_VERSION }}
+        python-version: ${{ matrix.python-version }}
         
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git \
-          zip \
-          unzip \
-          openjdk-17-jdk \
-          python3-pip \
-          autoconf \
-          libtool \
-          pkg-config \
-          zlib1g-dev \
-          libncurses5-dev \
-          libncursesw5-dev \
-          libtinfo5 \
-          cmake \
-          libffi-dev \
-          libssl-dev \
-          ninja-build \
-          lld \
-          patchelf \
-          libxml2-dev \
-          libxslt-dev \
-          python3-dev
-          
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install cython==0.29.33
-        pip install buildozer==1.5.0
-        pip install kivy==2.2.1
-        pip install kivymd==1.1.1
+        pip install pytest pytest-cov
+        pip install -r requirements.txt 2>/dev/null || echo "No requirements.txt"
         
-    - name: Create buildozer.spec if not exists
+    - name: Test with pytest
       run: |
-        if [ ! -f "buildozer.spec" ]; then
-          buildozer init
-          # تعديل ملف buildozer.spec
-          sed -i 's/^title = .*/title = صيدلية البركة/' buildozer.spec
-          sed -i 's/^package.name = .*/package.name = pharmacyapp/' buildozer.spec
-          sed -i 's/^package.domain = .*/package.domain = com.barka/' buildozer.spec
-          sed -i 's/^version = .*/version = 1.0/' buildozer.spec
-          sed -i 's/^requirements = .*/requirements = python3,kivy==2.2.1,kivymd==1.1.1,sqlite3,pyjnius,android/' buildozer.spec
-          sed -i 's/^orientation = .*/orientation = portrait/' buildozer.spec
-          sed -i 's/^fullscreen = .*/fullscreen = 0/' buildozer.spec
-          sed -i 's/^android.api = .*/android.api = 33/' buildozer.spec
-          sed -i 's/^android.minapi = .*/android.minapi = 21/' buildozer.spec
-          sed -i 's/^android.sdk = .*/android.sdk = 33/' buildozer.spec
-          sed -i 's/^android.ndk = .*/android.ndk = 23b/' buildozer.spec
-          sed -i 's/^android.permissions = .*/android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,CAMERA/' buildozer.spec
-          sed -i 's/^android.wakelock = .*/android.wakelock = True/' buildozer.spec
-          sed -i 's/^android.allow_backup = .*/android.allow_backup = True/' buildozer.spec
-          sed -i 's/^android.accept_sdk_license = .*/android.accept_sdk_license = True/' buildozer.spec
-        fi
+        pytest tests/ -v --cov=.
         
-    - name: Create main.py for Kivy
-      run: |
-        if [ ! -f "main.py" ]; then
-          cat > main.py << 'EOF'
-from kivy.app import App
-from kivy.uix.screenmanager import ScreenManager, Screen
-from kivy.lang import Builder
-from kivy.core.window import Window
-from kivy.utils import platform
-import sqlite3
-import json
-from datetime import datetime
-import os
-
-class MainScreen(Screen):
-    pass
-
-class PharmacyApp(App):
-    def build(self):
-        Window.clearcolor = (0.95, 0.95, 0.95, 1)
-        
-        sm = ScreenManager()
-        sm.add_widget(MainScreen(name='main'))
-        return sm
-
-if __name__ == '__main__':
-    PharmacyApp().run()
-EOF
-        fi
-        
-    - name: Create assets directory
-      run: |
-        mkdir -p assets
-        # إنشاء أيقونة افتراضية إذا لم تكن موجودة
-        if [ ! -f "assets/icon.png" ]; then
-          echo "Creating default icon..."
-          # يمكنك استبدال هذا بإنشاء أيقونة حقيقية
-          touch assets/icon.png
-        fi
-        
-    - name: Build Android APK
-      run: |
-        export PATH=$PATH:~/.local/bin
-        buildozer -v android debug
-        
-    - name: Upload APK artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: pharmacy-app-apk
-        path: bin/*.apk
-        retention-days: 7
-        
-    - name: Upload build logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: |
-          .buildozer/**/*.log
-        retention-days: 7
-
-  build-android-release:
-    needs: build-android
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Download debug APK
-      uses: actions/download-artifact@v4
-      with:
-        name: pharmacy-app-apk
-        
-    - name: Set up environment for release build
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git \
-          zip \
-          unzip \
-          openjdk-17-jdk \
-          python3-pip \
-          autoconf \
-          libtool \
-          pkg-config
-          
-    - name: Configure for release build
-      run: |
-        # إنشاء مفتاح التوقيع (لتجربة فقط - للإنتاج استخدم مفتاحك الخاص)
-        if [ ! -f "pharmacy.keystore" ]; then
-          keytool -genkey -v -keystore pharmacy.keystore \
-            -alias pharmacykey -keyalg RSA -keysize 2048 \
-            -validity 10000 -storepass pharmacy123 -keypass pharmacy123 \
-            -dname "CN=Pharmacy, OU=Dev, O=Barka, L=Riyadh, ST=SA, C=SA"
-        fi
-        
-        # تعديل buildozer.spec لإعدادات الإصدار
-        if [ -f "buildozer.spec" ]; then
-          sed -i 's/^android.release_artifact = .*/android.release_artifact = .apk/' buildozer.spec
-          echo "" >> buildozer.spec
-          echo "# Release signing" >> buildozer.spec
-          echo "android.keystore = ./pharmacy.keystore" >> buildozer.spec
-          echo "android.keystore_storepass = pharmacy123" >> buildozer.spec
-          echo "android.keystore_keypass = pharmacy123" >> buildozer.spec
-          echo "android.keystore_alias = pharmacykey" >> buildozer.spec
-        fi
-        
-    - name: Build Release APK
-      run: |
-        export PATH=$PATH:~/.local/bin
-        buildozer -v android release
-        
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: pharmacy-app-release
-        path: bin/*release*.apk
-        retention-days: 30
-        
-    - name: Create GitHub Release
-      if: success()
-      uses: softprops/action-gh-release@v1
-      with:
-        files: bin/*release*.apk
-        tag_name: v1.0-${{ github.run_number }}
-        name: Pharmacy App v1.0.${{ github.run_number }}
-        body: |
-          # تطبيق صيدلية البركة
-          
-          ## التغييرات في هذا الإصدار:
-          - الإصدار الأول من تطبيق إدارة الصيدلية
-          - دعم نظام Android 5.0+
-          - واجهة عربية كاملة
-          
-          ## المميزات:
-          - إدارة المخزون
-          - تسجيل المرضى
-          - فواتير البيع
-          - تقارير مالية
-          
-          ## متطلبات النظام:
-          - Android 5.0 أو أعلى
-          - 50MB مساحة تخزين
-          
-          ## تعليمات التثبيت:
-          1. قم بتنزيل ملف APK
-          2. اسمح بتثبيت التطبيقات من مصادر غير معروفة
-          3. افتح الملف وقم بالتثبيت
-
-  test-apk:
-    needs: build-android
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Download APK
-      uses: actions/download-artifact@v4
-      with:
-        name: pharmacy-app-apk
-        
-    - name: Install Android SDK for testing
-      run: |
-        wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-        unzip commandlinetools-linux-9477386_latest.zip
-        mkdir -p android-sdk/cmdline-tools
-        mv cmdline-tools android-sdk/cmdline-tools/latest
-        export ANDROID_SDK_ROOT=$PWD/android-sdk
-        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-        
-    - name: Check APK info
-      run: |
-        # تثبيت aapt2 للتحقق من معلومات APK
-        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0"
-        export PATH=$PATH:$ANDROID_SDK_ROOT/build-tools/34.0.0
-        
-        # البحث عن ملف APK
-        APK_FILE=$(find . -name "*.apk" -type f | head -n 1)
-        if [ -n "$APK_FILE" ]; then
-          echo "Found APK: $APK_FILE"
-          aapt2 dump badging "$APK_FILE" | grep -E "(package|launchable-activity|sdkVersion|targetSdkVersion)"
-          # التحقق من حجم APK
-          ls -lh "$APK_FILE"
-        else
-          echo "No APK file found"
-          exit 1
-        fi
-
-  deploy-documentation:
-    needs: [build-android, test-apk]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Generate documentation
-      run: |
-        mkdir -p docs
-        cat > docs/index.html << 'EOF'
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تطبيق صيدلية البركة - التوثيق</title>
-    <style>
-        body {
-            font-family: 'Arial', sans-serif;
-            line-height: 1.6;
-            margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        .container {
-            max-width: 800px;
-            margin: auto;
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        h1, h2, h3 {
-            color: #2c3e50;
-        }
-        .download-btn {
-            display: inline-block;
-            background: #3498db;
-            color: white;
-            padding: 12px 24px;
-            text-decoration: none;
-            border-radius: 5px;
-            margin: 10px 5px;
-        }
-        .feature-list {
-            list-style-type: none;
-            padding: 0;
-        }
-        .feature-list li {
-            padding: 8px 0;
-            border-bottom: 1px solid #eee;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>تطبيق صيدلية البركة</h1>
-        <p>تطبيق متكامل لإدارة الصيدليات على نظام Android</p>
-        
-        <h2>تحميل التطبيق</h2>
-        <a href="https://github.com/${{ github.repository }}/releases/latest/download/pharmacy-app.apk" 
-           class="download-btn">
-           ⬇️ تحميل الإصدار الأخير
-        </a>
-        
-        <h2>المميزات</h2>
-        <ul class="feature-list">
-            <li>✅ إدارة المخزون الكاملة</li>
-            <li>✅ تسجيل المرضى والعملاء</li>
-            <li>✅ نظام الفواتير والمبيعات</li>
-            <li>✅ تقارير مالية مفصلة</li>
-            <li>✅ تنبيهات انتهاء الصلاحية</li>
-            <li>✅ واجهة عربية كاملة</li>
-            <li>✅ يعمل بدون إنترنت</li>
-        </ul>
-        
-        <h2>متطلبات النظام</h2>
-        <ul>
-            <li>Android 5.0 أو أعلى</li>
-            <li>50MB مساحة تخزين</li>
-            <li>512MB ذاكرة RAM</li>
-        </ul>
-        
-        <h2>دليل الاستخدام</h2>
-        <ol>
-            <li>قم بتنزيل ملف APK</li>
-            <li>اسمح بتثبيت التطبيقات من مصادر غير معروفة</li>
-            <li>افتح الملف وقم بالتثبيت</li>
-            <li>شغل التطبيق وابدأ في الإضافة</li>
-        </ol>
-        
-        <h2>الدعم الفني</h2>
-        <p>للدعم الفني أو الإبلاغ عن مشاكل:</p>
-        <ul>
-            <li>📧 البريد الإلكتروني: support@example.com</li>
-            <li>📞 الهاتف: +966500000000</li>
-            <li>🐙 GitHub Issues: <a href="https://github.com/${{ github.repository }}/issues">الإبلاغ عن مشكلة</a></li>
-        </ul>
-    </div>
-</body>
-</html>
-EOF
-        
-    - name: Deploy to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./docs
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
